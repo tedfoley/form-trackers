@@ -305,6 +305,7 @@ interface FeaturePacket {
     dataValid: boolean;
     lowBattery: boolean;
     imuError: boolean;
+    timeSynced: boolean;
   };
 }
 
@@ -319,6 +320,7 @@ function parseFeaturePacket(data: DataView): FeaturePacket {
       dataValid:  !!(data.getUint8(11) & 0x01),
       lowBattery: !!(data.getUint8(11) & 0x02),
       imuError:   !!(data.getUint8(11) & 0x04),
+      timeSynced: !!(data.getUint8(11) & 0x08),
     },
   };
 }

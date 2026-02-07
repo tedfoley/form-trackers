@@ -1,5 +1,31 @@
 import type {Device} from 'react-native-ble-plx';
 
+export type BodyLocation =
+  | 'left_foot'
+  | 'right_foot'
+  | 'waist'
+  | 'chest'
+  | 'left_wrist'
+  | 'right_wrist';
+
+export const BODY_LOCATION_LABELS: Record<BodyLocation, string> = {
+  left_foot: 'Left Foot',
+  right_foot: 'Right Foot',
+  waist: 'Waist',
+  chest: 'Chest',
+  left_wrist: 'Left Wrist',
+  right_wrist: 'Right Wrist',
+};
+
+export const ALL_BODY_LOCATIONS: BodyLocation[] = [
+  'left_foot',
+  'right_foot',
+  'waist',
+  'chest',
+  'left_wrist',
+  'right_wrist',
+];
+
 export interface FeaturePacket {
   timestamp: number;
   cadence: number;
@@ -10,6 +36,7 @@ export interface FeaturePacket {
     dataValid: boolean;
     lowBattery: boolean;
     imuError: boolean;
+    timeSynced: boolean;
   };
 }
 
@@ -27,21 +54,46 @@ export interface ScannedDevice {
   device: Device;
 }
 
-export interface BLEState {
+export interface PodState {
+  deviceId: string;
+  deviceName: string;
+  device: Device | null;
   connectionState: ConnectionState;
-  scannedDevices: ScannedDevice[];
-  connectedDevice: Device | null;
   latestPacket: FeaturePacket | null;
   batteryLevel: number | null;
+  bodyLocation: BodyLocation | null;
+  timeSynced: boolean;
+}
+
+export interface PodAssignment {
+  deviceId: string;
+  deviceName: string;
+  bodyLocation: BodyLocation;
+}
+
+export interface BLEState {
+  scanState: 'idle' | 'scanning';
+  scannedDevices: ScannedDevice[];
+  pods: Record<string, PodState>;
+  selectedPodId: string | null;
+  savedAssignments: PodAssignment[];
+  demoMode: boolean;
   error: string | null;
 }
 
 export type BLEAction =
-  | {type: 'SET_CONNECTION_STATE'; payload: ConnectionState}
+  | {type: 'SET_SCAN_STATE'; payload: 'idle' | 'scanning'}
   | {type: 'ADD_SCANNED_DEVICE'; payload: ScannedDevice}
   | {type: 'CLEAR_SCANNED_DEVICES'}
-  | {type: 'SET_CONNECTED_DEVICE'; payload: Device | null}
-  | {type: 'SET_LATEST_PACKET'; payload: FeaturePacket}
-  | {type: 'SET_BATTERY_LEVEL'; payload: number}
+  | {type: 'ADD_POD'; payload: PodState}
+  | {type: 'REMOVE_POD'; payload: string}
+  | {type: 'SET_POD_CONNECTION_STATE'; payload: {deviceId: string; state: ConnectionState}}
+  | {type: 'SET_POD_PACKET'; payload: {deviceId: string; packet: FeaturePacket}}
+  | {type: 'SET_POD_BATTERY'; payload: {deviceId: string; level: number}}
+  | {type: 'SET_POD_LOCATION'; payload: {deviceId: string; location: BodyLocation | null}}
+  | {type: 'SET_POD_TIME_SYNCED'; payload: {deviceId: string; synced: boolean}}
+  | {type: 'SET_SELECTED_POD'; payload: string | null}
+  | {type: 'LOAD_SAVED_ASSIGNMENTS'; payload: PodAssignment[]}
+  | {type: 'SET_DEMO_MODE'; payload: boolean}
   | {type: 'SET_ERROR'; payload: string | null}
   | {type: 'RESET'};

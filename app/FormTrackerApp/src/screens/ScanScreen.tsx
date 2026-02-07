@@ -16,14 +16,9 @@ import type {RootStackParamList} from '../navigation/AppNavigator';
 type Props = NativeStackScreenProps<RootStackParamList, 'Scan'>;
 
 export function ScanScreen({navigation}: Props) {
-  const {state, startScan, stopScan, connectToDevice} = useBLEContext();
-  const {connectionState, scannedDevices, error} = state;
-
-  useEffect(() => {
-    if (connectionState === 'connected') {
-      navigation.navigate('Metrics');
-    }
-  }, [connectionState, navigation]);
+  const {state, startScan, stopScan, connectToPod, startDemoMode} =
+    useBLEContext();
+  const {scanState, scannedDevices, pods, error} = state;
 
   useEffect(() => {
     return () => stopScan();
@@ -31,13 +26,18 @@ export function ScanScreen({navigation}: Props) {
 
   const handleConnect = useCallback(
     (scanned: ScannedDevice) => {
-      connectToDevice(scanned.device);
+      connectToPod(scanned.device);
     },
-    [connectToDevice],
+    [connectToPod],
   );
 
-  const isScanning = connectionState === 'scanning';
-  const isConnecting = connectionState === 'connecting';
+  const handleDemoMode = useCallback(() => {
+    startDemoMode();
+    navigation.navigate('PodAssignment');
+  }, [startDemoMode, navigation]);
+
+  const isScanning = scanState === 'scanning';
+  const connectedCount = Object.keys(pods).length;
 
   return (
     <View style={styles.container}>
@@ -55,9 +55,10 @@ export function ScanScreen({navigation}: Props) {
       <TouchableOpacity
         style={[styles.scanBtn, isScanning && styles.scanBtnActive]}
         onPress={isScanning ? stopScan : startScan}
-        disabled={isConnecting}
         activeOpacity={0.7}>
-        {isScanning && <ActivityIndicator color="#FFFFFF" style={styles.spinner} />}
+        {isScanning && (
+          <ActivityIndicator color="#FFFFFF" style={styles.spinner} />
+        )}
         <Text style={styles.scanBtnText}>
           {isScanning ? 'Stop Scanning' : 'Start Scanning'}
         </Text>
@@ -70,7 +71,7 @@ export function ScanScreen({navigation}: Props) {
           <DeviceCard
             device={item}
             onConnect={handleConnect}
-            connecting={isConnecting}
+            connected={!!pods[item.id]}
           />
         )}
         ListEmptyComponent={
@@ -85,6 +86,24 @@ export function ScanScreen({navigation}: Props) {
         style={styles.list}
         contentContainerStyle={styles.listContent}
       />
+
+      {connectedCount > 0 && (
+        <TouchableOpacity
+          style={styles.nextBtn}
+          onPress={() => navigation.navigate('PodAssignment')}
+          activeOpacity={0.7}>
+          <Text style={styles.nextBtnText}>
+            Next ({connectedCount} pod{connectedCount !== 1 ? 's' : ''})
+          </Text>
+        </TouchableOpacity>
+      )}
+
+      <TouchableOpacity
+        style={styles.demoBtn}
+        onPress={handleDemoMode}
+        activeOpacity={0.7}>
+        <Text style={styles.demoBtnText}>Demo Mode</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -148,5 +167,31 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     marginTop: 40,
+  },
+  nextBtn: {
+    backgroundColor: '#30D158',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  nextBtnText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  demoBtn: {
+    backgroundColor: '#1C1C1E',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 40,
+    borderWidth: 1,
+    borderColor: '#3A3A3C',
+  },
+  demoBtnText: {
+    color: '#8E8E93',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

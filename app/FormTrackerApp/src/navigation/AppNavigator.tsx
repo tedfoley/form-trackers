@@ -1,10 +1,12 @@
 import React from 'react';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {ScanScreen} from '../screens/ScanScreen';
+import {PodAssignmentScreen} from '../screens/PodAssignmentScreen';
 import {MetricsScreen} from '../screens/MetricsScreen';
 
 export type RootStackParamList = {
   Scan: undefined;
+  PodAssignment: undefined;
   Metrics: undefined;
 };
 
@@ -20,6 +22,7 @@ export function AppNavigator() {
         animation: 'slide_from_right',
       }}>
       <Stack.Screen name="Scan" component={ScanScreen} />
+      <Stack.Screen name="PodAssignment" component={PodAssignmentScreen} />
       <Stack.Screen name="Metrics" component={MetricsScreen} />
     </Stack.Navigator>
   );

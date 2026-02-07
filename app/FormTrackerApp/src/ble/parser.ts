@@ -4,6 +4,7 @@ import {
   CMD_START_STREAMING,
   CMD_STOP_STREAMING,
   CMD_REQUEST_BATTERY,
+  CMD_TIME_SYNC,
   DEFAULT_STREAM_RATE_HZ,
 } from './constants';
 
@@ -29,6 +30,7 @@ export function parseFeaturePacket(base64Data: string): FeaturePacket {
       dataValid: !!(flagsByte & 0x01),
       lowBattery: !!(flagsByte & 0x02),
       imuError: !!(flagsByte & 0x04),
+      timeSynced: !!(flagsByte & 0x08),
     },
   };
 }
@@ -47,5 +49,17 @@ export function encodeConfigCommand(
   buf[1] = streamRateHz;
   buf[2] = 0x00;
   buf[3] = 0x00;
+  return buf.toString('base64');
+}
+
+export function encodeTimeSyncCommand(epochMs: number): string {
+  const buf = Buffer.alloc(9);
+  buf[0] = CMD_TIME_SYNC;
+  // Encode uint64 LE — use Math.floor division to avoid 32-bit truncation
+  let val = Math.floor(epochMs);
+  for (let i = 1; i <= 8; i++) {
+    buf[i] = val % 256;
+    val = Math.floor(val / 256);
+  }
   return buf.toString('base64');
 }

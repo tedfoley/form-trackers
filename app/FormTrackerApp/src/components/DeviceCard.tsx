@@ -5,15 +5,15 @@ import type {ScannedDevice} from '../ble/types';
 interface DeviceCardProps {
   device: ScannedDevice;
   onConnect: (device: ScannedDevice) => void;
-  connecting: boolean;
+  connected: boolean;
 }
 
-export function DeviceCard({device, onConnect, connecting}: DeviceCardProps) {
+export function DeviceCard({device, onConnect, connected}: DeviceCardProps) {
   return (
     <TouchableOpacity
       style={styles.card}
-      onPress={() => onConnect(device)}
-      disabled={connecting}
+      onPress={() => !connected && onConnect(device)}
+      disabled={connected}
       activeOpacity={0.7}>
       <View style={styles.info}>
         <Text style={styles.name}>{device.name}</Text>
@@ -21,11 +21,15 @@ export function DeviceCard({device, onConnect, connecting}: DeviceCardProps) {
           {device.rssi != null ? `${device.rssi} dBm` : '—'}
         </Text>
       </View>
-      <View style={[styles.connectBtn, connecting && styles.connectBtnDisabled]}>
-        <Text style={styles.connectText}>
-          {connecting ? 'Connecting...' : 'Connect'}
-        </Text>
-      </View>
+      {connected ? (
+        <View style={styles.connectedBadge}>
+          <Text style={styles.connectedText}>Connected</Text>
+        </View>
+      ) : (
+        <View style={styles.connectBtn}>
+          <Text style={styles.connectText}>Connect</Text>
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
@@ -59,11 +63,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
-  connectBtnDisabled: {
-    opacity: 0.5,
-  },
   connectText: {
     color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  connectedBadge: {
+    backgroundColor: '#0A3A1A',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  connectedText: {
+    color: '#30D158',
     fontSize: 14,
     fontWeight: '600',
   },
