@@ -1,6 +1,6 @@
 // Form Tracker — BLE Running Form Peripheral
 // Target: Seeed XIAO nRF52840 Sense
-// Protocol: docs/ble-protocol.md v1.0.0
+// Protocol: docs/ble-protocol.md v1.1.0
 //
 // Streams mock running biomechanics data over BLE at 10 Hz.
 // Real IMU integration will replace the mock data generator later.
@@ -15,6 +15,7 @@
 #define CHAR_FEATURE_UUID   "a0e50003-0000-1000-8000-00805f9b34fb"
 #define CHAR_BATTERY_UUID   "a0e50004-0000-1000-8000-00805f9b34fb"
 #define CHAR_LOG_UUID       "a0e50005-0000-1000-8000-00805f9b34fb"
+#define CHAR_DEVNAME_UUID   "a0e50006-0000-1000-8000-00805f9b34fb"
 
 // ---------------------------------------------------------------------------
 // Feature packet (12 bytes, packed, little-endian on ARM)
@@ -38,6 +39,7 @@ static_assert(sizeof(feature_packet_t) == 12, "Feature packet must be 12 bytes")
 #define CMD_START_STREAMING  0x01
 #define CMD_STOP_STREAMING   0x02
 #define CMD_REQUEST_BATTERY  0x03
+#define CMD_TIME_SYNC        0x04
 
 // ---------------------------------------------------------------------------
 // Timing
@@ -54,7 +56,7 @@ static_assert(sizeof(feature_packet_t) == 12, "Feature packet must be 12 bytes")
 BLEService formService(SERVICE_UUID);
 
 BLECharacteristic configChar(CHAR_CONFIG_UUID,
-                             BLEWrite, 4);  // 4-byte config packet
+                             BLEWrite, 9);  // up to 9 bytes (time sync cmd)
 
 BLECharacteristic featureChar(CHAR_FEATURE_UUID,
                               BLENotify, sizeof(feature_packet_t));
@@ -65,6 +67,9 @@ BLECharacteristic batteryChar(CHAR_BATTERY_UUID,
 BLECharacteristic logChar(CHAR_LOG_UUID,
                            BLERead | BLENotify, 20);  // reserved, empty
 
+BLECharacteristic devNameChar(CHAR_DEVNAME_UUID,
+                              BLERead, 20);  // device name string
+
 // State
 bool     streaming        = false;
 uint8_t  streamHz         = DEFAULT_STREAM_HZ;
@@ -72,6 +77,14 @@ uint32_t lastStreamMs     = 0;
 uint32_t lastBatteryMs    = 0;
 uint32_t streamStartMs    = 0;
 uint32_t mockTick         = 0;
+
+// Time sync state
+bool     timeSynced       = false;
+uint64_t syncEpochMs      = 0;   // phone's epoch ms at sync time
+uint32_t syncLocalMs      = 0;   // millis() at sync time
+
+// Device name (built from MAC, stored globally for characteristic)
+char     deviceName[24]   = "FormTracker";
 
 // ---------------------------------------------------------------------------
 // Device name from MAC
@@ -90,10 +103,21 @@ void buildDeviceName(char* buf, size_t len) {
 }
 
 // ---------------------------------------------------------------------------
+// Timestamp: returns synced epoch ms (lower 32 bits) or raw millis()
+// ---------------------------------------------------------------------------
+uint32_t getTimestamp() {
+    if (timeSynced) {
+        uint64_t epoch = syncEpochMs + (uint64_t)(millis() - syncLocalMs);
+        return (uint32_t)(epoch & 0xFFFFFFFF);
+    }
+    return millis();
+}
+
+// ---------------------------------------------------------------------------
 // Mock data generation (per ble-protocol.md §6)
 // ---------------------------------------------------------------------------
 void generateMockPacket(feature_packet_t* pkt) {
-    pkt->timestamp = millis();
+    pkt->timestamp = getTimestamp();
 
     // 30-second sine wave at 10 Hz → period = 10 * 30 = 300 ticks
     float phase = sin(2.0f * PI * (float)mockTick / 300.0f);
@@ -107,16 +131,19 @@ void generateMockPacket(feature_packet_t* pkt) {
     // Vertical oscillation: 85 +/- 10 mm, in phase with GCT (inverse to cadence)
     pkt->vertical_oscillation = (uint16_t)(85 - (int16_t)(10.0f * phase));
 
-    // Stride phase: stance vs flight based on gait timing
+    // Stride phase: stance vs flight based on gait timing (use raw millis for local timing)
     uint32_t stridePeriodMs = 60000 / pkt->cadence;   // ~375 ms at 160 spm
     uint32_t stanceMs       = stridePeriodMs * 2 / 3;  // ~250 ms stance
-    uint32_t phaseMs        = pkt->timestamp % stridePeriodMs;
+    uint32_t phaseMs        = millis() % stridePeriodMs;
     pkt->stride_phase       = (phaseMs < stanceMs) ? 1 : 2;
 
-    // Flags: bit 0 = 0 (mock data), bit 1 = low_battery check
+    // Flags: bit 0 = 0 (mock data), bit 1 = low_battery, bit 3 = time_synced
     pkt->flags = 0x00;
     if (getMockBatteryLevel() <= 15) {
         pkt->flags |= 0x02;  // low_battery
+    }
+    if (timeSynced) {
+        pkt->flags |= 0x08;  // time_synced
     }
 
     mockTick++;
@@ -170,6 +197,27 @@ void onConfigWritten(BLEDevice central, BLECharacteristic characteristic) {
             Serial.println("%");
             break;
         }
+        case CMD_TIME_SYNC: {
+            if (len < 9) {
+                Serial.println("[BLE] Time sync: need 9 bytes (cmd + uint64)");
+                break;
+            }
+            // Read uint64 little-endian from bytes 1–8
+            syncEpochMs = 0;
+            for (int i = 0; i < 8; i++) {
+                syncEpochMs |= ((uint64_t)data[1 + i]) << (i * 8);
+            }
+            syncLocalMs = millis();
+            timeSynced = true;
+            Serial.print("[BLE] Time sync: epoch=");
+            // Print high and low 32 bits since Serial doesn't support uint64
+            Serial.print((uint32_t)(syncEpochMs >> 32));
+            Serial.print(":");
+            Serial.print((uint32_t)(syncEpochMs & 0xFFFFFFFF));
+            Serial.print(" local=");
+            Serial.println(syncLocalMs);
+            break;
+        }
         default:
             Serial.print("[BLE] Unknown command: 0x");
             Serial.println(cmd, HEX);
@@ -205,7 +253,7 @@ void setup() {
     while (!Serial && (millis() - serialWait < 2000));
 
     Serial.println("=== Form Tracker Firmware ===");
-    Serial.println("Protocol: ble-protocol.md v1.0.0");
+    Serial.println("Protocol: ble-protocol.md v1.1.0");
     Serial.println("Mode: MOCK DATA");
     Serial.println();
 
@@ -216,7 +264,6 @@ void setup() {
     }
 
     // Build device name from MAC
-    char deviceName[24];
     buildDeviceName(deviceName, sizeof(deviceName));
     BLE.setLocalName(deviceName);
     Serial.print("[BLE] Device name: ");
@@ -230,6 +277,7 @@ void setup() {
     formService.addCharacteristic(featureChar);
     formService.addCharacteristic(batteryChar);
     formService.addCharacteristic(logChar);
+    formService.addCharacteristic(devNameChar);
 
     // Add service
     BLE.addService(formService);
@@ -240,6 +288,8 @@ void setup() {
 
     uint8_t emptyLog[20] = {0};
     logChar.writeValue(emptyLog, sizeof(emptyLog));
+
+    devNameChar.writeValue(deviceName);
 
     // Register config write handler
     configChar.setEventHandler(BLEWritten, onConfigWritten);
@@ -301,8 +351,9 @@ void loop() {
         // Detect disconnect
         if (!central.connected()) {
             streaming = false;
+            timeSynced = false;
             wasConnected = false;
-            Serial.println("[BLE] Disconnected");
+            Serial.println("[BLE] Disconnected (time sync reset)");
             Serial.println("[BLE] Advertising resumed");
         }
     }

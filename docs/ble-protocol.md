@@ -1,6 +1,6 @@
 # BLE Protocol Specification — Form Tracker
 
-**Version:** 1.0.0
+**Version:** 1.1.0
 **Last Updated:** 2026-02-07
 **Hardware:** Seeed XIAO nRF52840 Sense
 **Status:** Draft
@@ -35,6 +35,7 @@ Both firmware and app teams should treat this spec as the contract — changes r
 | Feature Stream      | `a0e50003-…` | Notify         | Device streams running metrics       |
 | Battery Level       | `a0e50004-…` | Read           | Current battery percentage           |
 | Log Download        | `a0e50005-…` | Read, Notify   | Reserved for future offline log sync |
+| Device Name         | `a0e50006-…` | Read           | Human-readable device identifier     |
 
 Full UUIDs (for copy-paste into code):
 
@@ -44,6 +45,7 @@ CHAR_CONFIG_UUID      = "a0e50002-0000-1000-8000-00805f9b34fb"
 CHAR_FEATURE_UUID     = "a0e50003-0000-1000-8000-00805f9b34fb"
 CHAR_BATTERY_UUID     = "a0e50004-0000-1000-8000-00805f9b34fb"
 CHAR_LOG_UUID         = "a0e50005-0000-1000-8000-00805f9b34fb"
+CHAR_DEVICE_NAME_UUID = "a0e50006-0000-1000-8000-00805f9b34fb"
 ```
 
 ---
@@ -54,23 +56,24 @@ CHAR_LOG_UUID         = "a0e50005-0000-1000-8000-00805f9b34fb"
 
 The app writes a configuration packet to start/stop streaming and set parameters.
 
-**Packet format (4 bytes):**
+**Packet format (variable length, 1–9 bytes):**
 
 ```
 Byte 0:    Command
              0x01 = Start streaming
              0x02 = Stop streaming
              0x03 = Request battery level update
-Byte 1:    Stream rate (Hz), default 10
+             0x04 = Time sync
+Byte 1:    Stream rate (Hz), default 10 — used with 0x01 only
              Valid range: 1–20
-Byte 2:    Reserved (0x00)
-Byte 3:    Reserved (0x00)
+Bytes 1–8: uint64_t Unix epoch milliseconds (LE) — used with 0x04 only
 ```
 
 **Behavior:**
-- On `0x01`: firmware begins sending Feature Stream notifications at the requested rate.
+- On `0x01`: firmware begins sending Feature Stream notifications at the requested rate. Byte 1 sets the rate (1–20 Hz, default 10).
 - On `0x02`: firmware stops notifications. The device remains connected.
 - On `0x03`: firmware updates the Battery Level characteristic and sends a read response.
+- On `0x04`: firmware records the phone's epoch timestamp alongside its own `millis()` value. All subsequent Feature Stream timestamps are adjusted: `timestamp = phone_epoch_ms + (millis() - millis_at_sync)`. This allows the app to correlate data from multiple devices using wall-clock time. The sync is reset on disconnect. Total write length for this command is 9 bytes.
 - Writing an invalid command returns ATT error `0x80` (Application Error).
 
 ### 3.2 Feature Stream (Notify) — `0x0003`
@@ -96,7 +99,7 @@ Offset  Size     Type       Field                  Unit         Range
 
 **Field notes:**
 
-- **timestamp**: Milliseconds since device boot. Rolls over at `0xFFFFFFFF`. The app should detect rollover by checking if the new timestamp is less than the previous.
+- **timestamp**: Milliseconds since device boot by default. If time sync has been performed (command `0x04`), this becomes **Unix epoch milliseconds (lower 32 bits)** — i.e. `(phone_epoch_ms + elapsed) & 0xFFFFFFFF`. The app can detect whether sync is active via the `time_synced` flag (bit 3). Rolls over at `0xFFFFFFFF`; the app should detect rollover by checking if the new timestamp is less than the previous.
 - **cadence**: Instantaneous cadence in steps per minute. Computed from the IMU step detection interval. `0` means no steps detected in the current window.
 - **ground_contact_time**: Duration in milliseconds the foot is on the ground per stride. Derived from accelerometer impact detection. `0` means not computed.
 - **vertical_oscillation**: Vertical bounce in **millimeters** (divide by 10 for cm on display). Using mm avoids floating point on firmware. Value `85` = 8.5 cm.
@@ -108,7 +111,9 @@ Bit 0:  data_valid      1 = metrics are computed from real sensor data
                         0 = mock/interpolated data
 Bit 1:  low_battery     1 = battery < 15%
 Bit 2:  imu_error       1 = IMU read failure (data may be stale)
-Bits 3–7: Reserved (0)
+Bit 3:  time_synced     1 = timestamp is synced to phone epoch
+                        0 = timestamp is millis() since boot
+Bits 4–7: Reserved (0)
 ```
 
 ### 3.3 Battery Level (Read) — `0x0004`
@@ -121,7 +126,17 @@ Byte 0:    uint8_t    battery_percent    0–100
 
 The firmware updates this value every 30 seconds internally. The app can read it at any time. A value of `0xFF` (255) indicates "charging / unknown".
 
-### 3.4 Log Download (Read/Notify) — `0x0005`
+### 3.4 Device Name (Read) — `0x0006`
+
+**Packet format (variable length, up to 20 bytes):**
+
+```
+Bytes 0–N:  UTF-8 string    Device name (e.g. "FormTracker-1A2B")
+```
+
+Returns the same name used in BLE advertising. The app can read this after connection to identify which device it is connected to, useful when multiple Form Trackers are in range.
+
+### 3.5 Log Download (Read/Notify) — `0x0005`
 
 **Reserved for future use.** This characteristic will support downloading stored session data when the device logs locally to flash.
 
@@ -335,4 +350,5 @@ static_assert(sizeof(feature_packet_t) == 12, "Feature packet must be 12 bytes")
 
 | Version | Date       | Author | Changes           |
 | ------- | ---------- | ------ | ----------------- |
+| 1.1.0   | 2026-02-07 | —      | Add time sync command (0x04), Device Name characteristic (0x0006), time_synced flag (bit 3) |
 | 1.0.0   | 2026-02-07 | —      | Initial draft     |
